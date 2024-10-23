@@ -1,8 +1,8 @@
 import requests
 import json
+import os
 import pandas as pd
 from tkinter import messagebox
-import os
 
 def consultar_pontomais(data_inicio, data_fim, codigo_unidade):
     payload = {
@@ -12,7 +12,7 @@ def consultar_pontomais(data_inicio, data_fim, codigo_unidade):
             "group_by": "employee",
             "row_filters": "with_inactives,has_time_cards",
             "columns": "registration_number,employee_name,date,team_name,shift_time,total_time,time_cards,extra_time,summary,overnight_time,time_balance,motive",
-            "format": "json",  # Alterado para JSON
+            "format": "json",
             "business_unit_id": codigo_unidade
         }
     }
@@ -30,33 +30,27 @@ def consultar_pontomais(data_inicio, data_fim, codigo_unidade):
         if response.status_code == 200:
             data = response.json()
 
-            # Normaliza e converte o JSON para DataFrame
-            if isinstance(data, dict):
-                df = pd.json_normalize(data, errors='ignore')
-            elif isinstance(data, list):
-                df = pd.DataFrame(data)
-            else:
-                messagebox.showerror("Erro", "Formato inesperado de resposta JSON.")
-                return None
-
-            # Reordenar o DataFrame de acordo com os campos desejados
-            columns_order = [
-                "registration_number", "employee_name", "date", "team_name",
-                "shift_time", "total_time", "time_cards", "extra_time",
-                "summary", "overnight_time", "time_balance", "motive"
-            ]
-            df = df[columns_order]
-
             # Criar a pasta 'result' se não existir
             if not os.path.exists('result'):
                 os.makedirs('result')
 
-            # Salvar o DataFrame em um arquivo CSV na pasta 'result'
-            output_path = os.path.join('result', 'relatorio_trabalho.csv')
-            df.to_csv(output_path, index=False, encoding='utf-8')
+            # Salvar o JSON em um arquivo
+            output_path = os.path.join('result', 'relatorio_trabalho.json')
+            with open(output_path, 'w', encoding='utf-8') as json_file:
+                json.dump(data, json_file, ensure_ascii=False, indent=4)
 
             print(f"Relatório salvo em: {output_path}")
             messagebox.showinfo("Sucesso", f"Relatório salvo em: {output_path}")
+
+            # Processar o JSON e criar um DataFrame
+            df = extrair_dados_empregados(data)
+
+            # Exportar o DataFrame para CSV na pasta 'result'
+            csv_output_path = os.path.join('result', 'relatorio_trabalho.csv')
+            df.to_csv(csv_output_path, index=False, encoding='utf-8')
+            print(f"Relatório CSV salvo em: {csv_output_path}")
+            messagebox.showinfo("Sucesso", f"Relatório CSV salvo em: {csv_output_path}")
+
             return df
 
         else:
@@ -68,3 +62,46 @@ def consultar_pontomais(data_inicio, data_fim, codigo_unidade):
         print(f"Erro ao realizar a requisição: {e}")
         messagebox.showerror("Erro", f"Erro ao realizar a requisição: {e}")
         return None
+
+def extrair_dados_empregados(json_data):
+    # Inicializando uma lista para armazenar as linhas de dados
+    linhas = []
+
+    # Percorrendo a chave 'data' no JSON
+    for grupo in json_data.get("data", []):
+        for empregado in grupo:
+            for registro in empregado.get("data", []):
+                # Extraindo os campos relevantes para o DataFrame
+                linha = {
+                    "date": registro.get("date"),
+                    "employee_name": registro.get("employee_name"),
+                    "team_name": registro.get("team_name"),
+                    "total_time": registro.get("total_time"),
+                    "shift_time": registro.get("shift_time"),
+                    "overnight_time": registro.get("overnight_time"),
+                    "registration_number": registro.get("registration_number"),
+                    "motive": registro.get("motive")
+                }
+
+                # Extraindo os dados de 'summary' e 'extra_time'
+                summary = registro.get("summary", [])
+                linha.update({
+                    "summary_credit": summary[0] if len(summary) > 0 else None,
+                    "summary_debit": summary[1] if len(summary) > 1 else None,
+                    "summary_interval": summary[2] if len(summary) > 2 else None,
+                    "summary_normal_hours": summary[3] if len(summary) > 3 else None
+                })
+
+                extra_time = registro.get("extra_time", [])
+                linha.update({
+                    "extra_time_50": extra_time[0]["value"] if len(extra_time) > 0 else None,
+                    "extra_time_100": extra_time[1]["value"] if len(extra_time) > 1 else None
+                })
+
+                # Adicionando a linha à lista
+                linhas.append(linha)
+
+    # Criando o DataFrame a partir das linhas extraídas
+    df = pd.DataFrame(linhas)
+
+    return df
